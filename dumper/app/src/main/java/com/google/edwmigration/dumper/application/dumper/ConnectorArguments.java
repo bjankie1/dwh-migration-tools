@@ -720,6 +720,11 @@ public class ConnectorArguments extends DefaultArguments {
     return Predicates.in(new HashSet<>(in));
   }
 
+  /**
+   * Returns the names of the databases to dump, trimmed and filtered for non-empty strings.
+   *
+   * @return A list of database names.
+   */
   @Nonnull
   public ImmutableList<String> getDatabases() {
     return getOptions().valuesOf(optionDatabase).stream()

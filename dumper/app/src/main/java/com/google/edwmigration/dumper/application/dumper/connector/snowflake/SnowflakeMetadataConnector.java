@@ -46,6 +46,7 @@ import com.google.edwmigration.dumper.plugin.lib.dumper.spi.SnowflakeMetadataDum
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
@@ -175,6 +176,8 @@ public class SnowflakeMetadataConnector extends AbstractSnowflakeConnector
     out.add(SnowflakeYamlSummaryTask.create(FORMAT_NAME, arguments));
 
     List<String> databases = getDatabases(arguments, out);
+    // Use LinkedHashSet to preserve order and remove duplicates.
+    databases = new ArrayList<>(new LinkedHashSet<>(databases));
 
     for (String databaseName : databases) {
       final String IS =
@@ -277,40 +280,78 @@ public class SnowflakeMetadataConnector extends AbstractSnowflakeConnector
           isAssessment,
           getInformationSchemaWhereCondition("function_catalog", arguments.getDatabases()));
 
-      if (isAssessment) {
-        for (AssessmentQuery item : planner.generateAssessmentQueries()) {
-          String query = queryForAssessment(item, arguments);
-          Task<?> task =
-              new JdbcSelectTask(item.zipEntryName, query, TaskCategory.REQUIRED, TaskOptions.DEFAULT)
-                  .withHeaderTransformer(item.transformer());
-          out.add(task);
+            if (isAssessment) {
+
+              for (AssessmentQuery item : planner.generateAssessmentQueries()) {
+
+                String query = queryForAssessment(item, arguments);
+
+                Task<?> task =
+
+                    new JdbcSelectTask(item.zipEntryName, query, TaskCategory.REQUIRED, TaskOptions.DEFAULT)
+
+                        .withHeaderTransformer(item.transformer());
+
+                out.add(task);
+
+              }
+
+              return;
+
+            }
+
+          } // End of outer for loop
+
+      
+
+          // Logic for external_tables.csv tasks
+
+          if (databases.isEmpty()) {
+
+            AssessmentQuery query = SnowflakePlanner.SHOW_EXTERNAL_TABLES;
+
+            Task<?> task = convertAssessmentQuery(query, arguments, TaskOptions.DEFAULT);
+
+            out.add(task);
+
+          } else {
+
+            TaskOptions taskOptions = TaskOptions.DEFAULT;
+
+      
+
+            for (String item : databases) {
+
+              String quotedName = databaseNameQuoted(item);
+
+              AssessmentQuery baseQuery = SnowflakePlanner.SHOW_EXTERNAL_TABLES;
+
+      
+
+              String formatString = String.format("%s IN DATABASE %s", baseQuery.formatString, quotedName);
+
+              AssessmentQuery query = baseQuery.withFormatString(formatString);
+
+              Task<?> task = convertAssessmentQuery(query, arguments, taskOptions);
+
+              out.add(task);
+
+              // Next tasks will append to the same file.
+
+              taskOptions = taskOptions.withWriteMode(WriteMode.APPEND_EXISTING);
+
+            }
+
+          }
+
         }
-        return;
-      }
 
-      if (databases.isEmpty()) {
-        AssessmentQuery query = SnowflakePlanner.SHOW_EXTERNAL_TABLES;
-        Task<?> task = convertAssessmentQuery(query, arguments, TaskOptions.DEFAULT);
-        out.add(task);
-        return;
-      }
-
-      TaskOptions taskOptions = TaskOptions.DEFAULT;
-
-      for (String item : databases) {
-        String quotedName = databaseNameQuoted(item);
-        AssessmentQuery baseQuery = SnowflakePlanner.SHOW_EXTERNAL_TABLES;
-
-        String formatString = String.format("%s IN DATABASE %s", baseQuery.formatString, quotedName);
-        AssessmentQuery query = baseQuery.withFormatString(formatString);
-        Task<?> task = convertAssessmentQuery(query, arguments, taskOptions);
-        out.add(task);
-        // Next tasks will append to the same file.
-        taskOptions = taskOptions.withWriteMode(WriteMode.APPEND_EXISTING);
-      }
-    }
-  }
-
+  /**
+   * Retrieves the list of databases to dump.
+   *
+   * <p>If the user has specified a list of databases in the arguments, those are used. Otherwise, a
+   * task is added to the task list to query the list of databases from the server.
+   */
   private List<String> getDatabases(
       @Nonnull ConnectorArguments arguments, @Nonnull List<? super Task<?>> out) {
     if (!arguments.getDatabases().isEmpty()) {
