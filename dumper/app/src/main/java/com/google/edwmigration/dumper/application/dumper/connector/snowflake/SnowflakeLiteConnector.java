@@ -69,8 +69,5 @@ public final class SnowflakeLiteConnector extends AbstractSnowflakeConnector {
     if (!arguments.isAssessment()) {
       throw SnowflakeUsageException.missingAssessmentException(NAME);
     }
-    if (!arguments.getDatabases().isEmpty()) {
-      throw SnowflakeUsageException.unsupportedFilter();
-    }
   }
 }

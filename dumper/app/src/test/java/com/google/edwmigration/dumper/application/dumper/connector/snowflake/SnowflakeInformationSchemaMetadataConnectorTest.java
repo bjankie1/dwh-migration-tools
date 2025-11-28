@@ -75,12 +75,12 @@ public class SnowflakeInformationSchemaMetadataConnectorTest
   }
 
   @Test
-  public void validate_assessmentFlagProvided_throwsException() {
+  public void validate_assessmentFlagProvided_doesNotThrowException() {
     ConnectorArguments arguments =
         ConnectorArguments.create(
             ImmutableList.of(
                 "--connector", "snowflake-information-schema-metadata", "--assessment"));
 
-    assertThrows(MetadataDumperUsageException.class, () -> connector.validate(arguments));
+    connector.validate(arguments);
   }
 }

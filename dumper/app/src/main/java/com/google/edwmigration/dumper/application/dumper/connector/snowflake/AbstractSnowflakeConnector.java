@@ -84,21 +84,10 @@ public abstract class AbstractSnowflakeConnector extends AbstractJdbcConnector {
     Properties properties = dataSourceProperties(arguments);
     String url = getUrlFromArguments(arguments);
     DataSource dataSource = new SimpleDriverDataSource(newDriver(arguments), url, properties);
-    if (arguments.isAssessment()) {
-      JdbcHandle handle = new JdbcHandle(dataSource);
-      JdbcTemplate template = handle.getJdbcTemplate();
-      String actualDatabase = template.queryForObject("USE DATABASE SNOWFLAKE;", String.class);
-      checkNotNull(actualDatabase);
-      return handle;
-    } else {
-      String databaseName =
-          arguments.getDatabases().isEmpty()
-              ? "SNOWFLAKE"
-              : sanitizeDatabaseName(arguments.getDatabases().get(0));
-      JdbcHandle handle = new JdbcHandle(dataSource);
-      setCurrentDatabase(databaseName, handle.getJdbcTemplate());
-      return handle;
-    }
+    JdbcHandle handle = new JdbcHandle(dataSource);
+    JdbcTemplate template = handle.getJdbcTemplate();
+    template.execute("USE DATABASE SNOWFLAKE;");
+    return handle;
   }
 
   @Override

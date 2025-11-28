@@ -76,37 +76,6 @@ public class AbstractSnowflakeConnectorTest extends AbstractConnectorTest {
   }
 
   @Test
-  public void openConnection_failsForVeryLongInput() throws IOException {
-    // 262 characters
-    String longInput =
-        "db12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
-    ConnectorArguments arguments =
-        makeArguments("--connector", metadataConnector.getName(), "--database", longInput);
-
-    MetadataDumperUsageException e =
-        assertThrows(MetadataDumperUsageException.class, () -> metadataConnector.open(arguments));
-
-    assertTrue(e.getMessage(), e.getMessage().contains("longer than the maximum allowed number"));
-  }
-
-  @Test
-  public void open_malformedInput_fail() throws IOException {
-    ConnectorArguments arguments =
-        makeArguments(
-            "--connector",
-            metadataConnector.getName(),
-            "--database",
-            "testdb\";DROP DATABASE testdb");
-
-    MetadataDumperUsageException e =
-        assertThrows(MetadataDumperUsageException.class, () -> metadataConnector.open(arguments));
-
-    assertTrue(
-        e.getMessage(),
-        e.getMessage().contains("Database name has incorrectly placed double quote(s)."));
-  }
-
-  @Test
   public void open_noUser_throwsUsageException() throws Exception {
     ConnectorArguments arguments =
         ConnectorArguments.create(ImmutableList.of("--connector", "snowflake", "--assessment"));
@@ -156,18 +125,11 @@ public class AbstractSnowflakeConnectorTest extends AbstractConnectorTest {
   }
 
   @Test
-  public void validate_assessmentEnabledWithDatabaseFilter_throwsUsageException()
-      throws IOException {
+  public void validate_assessmentEnabledWithDatabaseFilter_doesNotThrowException() throws IOException {
     ConnectorArguments arguments =
         makeArguments("--connector", "snowflake", "--database", "SNOWFLAKE", "--assessment");
 
-    MetadataDumperUsageException e =
-        assertThrows(
-            MetadataDumperUsageException.class, () -> metadataConnector.validate(arguments));
-
-    assertTrue(
-        e.getMessage(),
-        e.getMessage().contains("Trying to filter by database with the --assessment flag."));
+    metadataConnector.validate(arguments);
   }
 
   @Test

@@ -147,7 +147,7 @@ public class SnowflakeMetadataConnectorTest extends AbstractSnowflakeConnectorEx
 
   @Test
   public void connector_generatesExpectedSql() throws IOException {
-    Map<String, String> actualSqls = collectSqlStatements();
+    Map<String, String> actualSqls = collectSqlStatements("--database", "db1");
     TaskSqlMap expectedSqls =
         CoreMetadataDumpFormat.MAPPER.readValue(
             Resources.toString(
@@ -165,7 +165,7 @@ public class SnowflakeMetadataConnectorTest extends AbstractSnowflakeConnectorEx
   @Test
   public void connector_generatesExpectedSql_withQueryOverrides() throws IOException {
     Map<String, String> actualSqls =
-        collectSqlStatements("-Dsnowflake.metadata.columns.query=SQL_OVERRIDE");
+        collectSqlStatements("--database", "db1", "-Dsnowflake.metadata.columns.query=SQL_OVERRIDE");
 
     assertEquals("SQL_OVERRIDE", actualSqls.get("columns-au.csv"));
     assertEquals("SQL_OVERRIDE", actualSqls.get("columns.csv"));
@@ -174,7 +174,7 @@ public class SnowflakeMetadataConnectorTest extends AbstractSnowflakeConnectorEx
   @Test
   public void connector_generatesExpectedSql_withWhereOverrides() throws IOException {
     Map<String, String> actualSqls =
-        collectSqlStatements("-Dsnowflake.metadata.columns.where=SQL_OVERRIDE");
+        collectSqlStatements("--database", "db1", "-Dsnowflake.metadata.columns.where=SQL_OVERRIDE");
 
     assertTrue(actualSqls.get("columns-au.csv").endsWith("WHERE SQL_OVERRIDE"));
     assertFalse(actualSqls.get("columns-au.csv").contains("WHERE DELETED IS NULL"));
@@ -206,11 +206,13 @@ public class SnowflakeMetadataConnectorTest extends AbstractSnowflakeConnectorEx
 
     assertEquals(
         ImmutableList.of(
+            "SELECT catalog_name, schema_name FROM SNOWFLAKE.ACCOUNT_USAGE.SCHEMATA WHERE SQL_OVERRIDE",
             "SELECT catalog_name, schema_name FROM SNOWFLAKE.ACCOUNT_USAGE.SCHEMATA WHERE SQL_OVERRIDE"),
         actualSqls.get("schemata-au.csv"));
     assertEquals(
         ImmutableList.of(
-            "SELECT catalog_name, schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE SQL_OVERRIDE"),
+            "SELECT catalog_name, schema_name FROM db1.INFORMATION_SCHEMA.SCHEMATA WHERE SQL_OVERRIDE",
+            "SELECT catalog_name, schema_name FROM db2.INFORMATION_SCHEMA.SCHEMATA WHERE SQL_OVERRIDE"),
         actualSqls.get("schemata.csv"));
 
     // Two SHOW commands are executed and the result is appended to the same output file.

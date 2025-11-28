@@ -44,11 +44,4 @@ public class SnowflakeAccountUsageMetadataConnector extends SnowflakeMetadataCon
   public void printHelp(Appendable out) throws IOException {
     out.append(AbstractSnowflakeConnector.describeAsDelegate(this, "snowflake"));
   }
-
-  @Override
-  public final void validateForConnector(ConnectorArguments arguments) {
-    if (arguments.isAssessment()) {
-      throw SnowflakeUsageException.unsupportedAssessment();
-    }
-  }
 }

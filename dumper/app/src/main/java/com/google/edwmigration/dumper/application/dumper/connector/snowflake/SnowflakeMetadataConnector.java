@@ -22,6 +22,7 @@ import static com.google.edwmigration.dumper.application.dumper.connector.snowfl
 import com.google.auto.service.AutoService;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
+import com.google.common.io.ByteSink;
 import com.google.edwmigration.dumper.application.dumper.ConnectorArguments;
 import com.google.edwmigration.dumper.application.dumper.annotations.RespectsArgumentAssessment;
 import com.google.edwmigration.dumper.application.dumper.annotations.RespectsArgumentDatabaseForConnection;
@@ -30,6 +31,7 @@ import com.google.edwmigration.dumper.application.dumper.connector.Connector;
 import com.google.edwmigration.dumper.application.dumper.connector.ConnectorProperty;
 import com.google.edwmigration.dumper.application.dumper.connector.MetadataConnector;
 import com.google.edwmigration.dumper.application.dumper.connector.snowflake.SnowflakePlanner.AssessmentQuery;
+import com.google.edwmigration.dumper.application.dumper.handle.JdbcHandle;
 import com.google.edwmigration.dumper.application.dumper.io.OutputHandle.WriteMode;
 import com.google.edwmigration.dumper.application.dumper.task.AbstractJdbcTask;
 import com.google.edwmigration.dumper.application.dumper.task.AbstractTask.TaskOptions;
@@ -39,7 +41,11 @@ import com.google.edwmigration.dumper.application.dumper.task.JdbcSelectTask;
 import com.google.edwmigration.dumper.application.dumper.task.Summary;
 import com.google.edwmigration.dumper.application.dumper.task.Task;
 import com.google.edwmigration.dumper.application.dumper.task.TaskCategory;
+import com.google.edwmigration.dumper.application.dumper.task.TaskRunContext;
 import com.google.edwmigration.dumper.plugin.lib.dumper.spi.SnowflakeMetadataDumpFormat;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
@@ -127,12 +133,7 @@ public class SnowflakeMetadataConnector extends AbstractSnowflakeConnector
   }
 
   @Override
-  protected void validateForConnector(@Nonnull ConnectorArguments arguments) {
-    boolean hasDatabases = !arguments.getDatabases().isEmpty();
-    if (arguments.isAssessment() && hasDatabases) {
-      throw SnowflakeUsageException.unsupportedFilter();
-    }
-  }
+  protected void validateForConnector(@Nonnull ConnectorArguments arguments) {}
 
   private void addSqlTasksWithInfoSchemaFallback(
       @Nonnull List<? super Task<?>> out,
@@ -173,149 +174,171 @@ public class SnowflakeMetadataConnector extends AbstractSnowflakeConnector
     out.add(new FormatTask(FORMAT_NAME));
     out.add(SnowflakeYamlSummaryTask.create(FORMAT_NAME, arguments));
 
-    boolean INJECT_IS_FAULT = arguments.isTestFlag('A');
-    // INFORMATION_SCHEMA queries must be qualified with a database
-    // name or that a "USE DATABASE" command has previously been run
-    // in the same session. Qualify the name to avoid this dependency.
-    final String databaseName = arguments.getDatabaseSingleName();
-    final String IS;
-    if (INJECT_IS_FAULT) {
-      IS = "__NONEXISTENT__";
-    } else if (databaseName == null) {
-      IS = "INFORMATION_SCHEMA";
-    } else {
-      IS = sanitizeDatabaseName(databaseName) + ".INFORMATION_SCHEMA";
-    }
+    List<String> databases = getDatabases(arguments, out);
 
-    boolean isAssessment = arguments.isAssessment();
-    addSqlTasksWithInfoSchemaFallback(
-        out,
-        DatabasesFormat.Header.class,
-        getOverrideableQuery(
-            arguments,
-            "SELECT database_name, database_owner FROM %1$s.DATABASES%2$s",
-            MetadataView.DATABASES),
-        DatabasesFormat.IS_ZIP_ENTRY_NAME,
-        IS,
-        DatabasesFormat.AU_ZIP_ENTRY_NAME,
-        ACCOUNT_USAGE_SCHEMA_NAME,
-        ACCOUNT_USAGE_WHERE_CONDITION,
-        isAssessment,
-        getInformationSchemaWhereCondition("database_name", arguments.getDatabases()));
+    for (String databaseName : databases) {
+      final String IS =
+          arguments.isTestFlag('A') ? "__NONEXISTENT__" : databaseName + ".INFORMATION_SCHEMA";
 
-    addSqlTasksWithInfoSchemaFallback(
-        out,
-        SchemataFormat.Header.class,
-        getOverrideableQuery(
-            arguments,
-            "SELECT catalog_name, schema_name FROM %1$s.SCHEMATA%2$s",
-            MetadataView.SCHEMATA),
-        SchemataFormat.IS_ZIP_ENTRY_NAME,
-        IS,
-        SchemataFormat.AU_ZIP_ENTRY_NAME,
-        ACCOUNT_USAGE_SCHEMA_NAME,
-        ACCOUNT_USAGE_WHERE_CONDITION,
-        isAssessment,
-        getInformationSchemaWhereCondition("catalog_name", arguments.getDatabases()));
+      boolean isAssessment = arguments.isAssessment();
+      addSqlTasksWithInfoSchemaFallback(
+          out,
+          DatabasesFormat.Header.class,
+          getOverrideableQuery(
+              arguments,
+              "SELECT database_name, database_owner FROM %1$s.DATABASES%2$s",
+              MetadataView.DATABASES),
+          DatabasesFormat.IS_ZIP_ENTRY_NAME,
+          IS,
+          DatabasesFormat.AU_ZIP_ENTRY_NAME,
+          ACCOUNT_USAGE_SCHEMA_NAME,
+          ACCOUNT_USAGE_WHERE_CONDITION,
+          isAssessment,
+          getInformationSchemaWhereCondition("database_name", arguments.getDatabases()));
 
-    addSqlTasksWithInfoSchemaFallback(
-        out,
-        TablesFormat.Header.class,
-        getOverrideableQuery(
-            arguments,
-            "SELECT table_catalog, table_schema, table_name, table_type, row_count, bytes,"
-                + " clustering_key FROM %1$s.TABLES%2$s",
-            MetadataView.TABLES),
-        TablesFormat.IS_ZIP_ENTRY_NAME,
-        IS,
-        TablesFormat.AU_ZIP_ENTRY_NAME,
-        ACCOUNT_USAGE_SCHEMA_NAME,
-        ACCOUNT_USAGE_WHERE_CONDITION,
-        isAssessment,
-        getInformationSchemaWhereCondition(
-            "table_catalog", arguments.getDatabases())); // Painfully slow.
+      addSqlTasksWithInfoSchemaFallback(
+          out,
+          SchemataFormat.Header.class,
+          getOverrideableQuery(
+              arguments,
+              "SELECT catalog_name, schema_name FROM %1$s.SCHEMATA%2$s",
+              MetadataView.SCHEMATA),
+          SchemataFormat.IS_ZIP_ENTRY_NAME,
+          IS,
+          SchemataFormat.AU_ZIP_ENTRY_NAME,
+          ACCOUNT_USAGE_SCHEMA_NAME,
+          ACCOUNT_USAGE_WHERE_CONDITION,
+          isAssessment,
+          getInformationSchemaWhereCondition("catalog_name", arguments.getDatabases()));
 
-    addSqlTasksWithInfoSchemaFallback(
-        out,
-        ColumnsFormat.Header.class,
-        getOverrideableQuery(
-            arguments,
-            "SELECT table_catalog, table_schema, table_name, ordinal_position, column_name,"
-                + " data_type, is_nullable, column_default, character_maximum_length,"
-                + " numeric_precision, numeric_scale, datetime_precision, comment FROM %1$s.COLUMNS%2$s",
-            MetadataView.COLUMNS),
-        ColumnsFormat.IS_ZIP_ENTRY_NAME,
-        IS,
-        ColumnsFormat.AU_ZIP_ENTRY_NAME,
-        ACCOUNT_USAGE_SCHEMA_NAME,
-        ACCOUNT_USAGE_WHERE_CONDITION,
-        isAssessment,
-        getInformationSchemaWhereCondition(
-            "table_catalog", arguments.getDatabases())); // Very fast.
+      addSqlTasksWithInfoSchemaFallback(
+          out,
+          TablesFormat.Header.class,
+          getOverrideableQuery(
+              arguments,
+              "SELECT table_catalog, table_schema, table_name, table_type, row_count, bytes,"
+                  + " clustering_key FROM %1$s.TABLES%2$s",
+              MetadataView.TABLES),
+          TablesFormat.IS_ZIP_ENTRY_NAME,
+          IS,
+          TablesFormat.AU_ZIP_ENTRY_NAME,
+          ACCOUNT_USAGE_SCHEMA_NAME,
+          ACCOUNT_USAGE_WHERE_CONDITION,
+          isAssessment,
+          getInformationSchemaWhereCondition(
+              "table_catalog", arguments.getDatabases())); // Painfully slow.
 
-    addSqlTasksWithInfoSchemaFallback(
-        out,
-        ViewsFormat.Header.class,
-        getOverrideableQuery(
-            arguments,
-            "SELECT table_catalog, table_schema, table_name, view_definition FROM %1$s.VIEWS%2$s",
-            MetadataView.VIEWS),
-        ViewsFormat.IS_ZIP_ENTRY_NAME,
-        IS,
-        ViewsFormat.AU_ZIP_ENTRY_NAME,
-        ACCOUNT_USAGE_SCHEMA_NAME,
-        ACCOUNT_USAGE_WHERE_CONDITION,
-        isAssessment,
-        getInformationSchemaWhereCondition("table_catalog", arguments.getDatabases()));
+      addSqlTasksWithInfoSchemaFallback(
+          out,
+          ColumnsFormat.Header.class,
+          getOverrideableQuery(
+              arguments,
+              "SELECT table_catalog, table_schema, table_name, ordinal_position, column_name,"
+                  + " data_type, is_nullable, column_default, character_maximum_length,"
+                  + " numeric_precision, numeric_scale, datetime_precision, comment FROM %1$s.COLUMNS%2$s",
+              MetadataView.COLUMNS),
+          ColumnsFormat.IS_ZIP_ENTRY_NAME,
+          IS,
+          ColumnsFormat.AU_ZIP_ENTRY_NAME,
+          ACCOUNT_USAGE_SCHEMA_NAME,
+          ACCOUNT_USAGE_WHERE_CONDITION,
+          isAssessment,
+          getInformationSchemaWhereCondition(
+              "table_catalog", arguments.getDatabases())); // Very fast.
 
-    addSqlTasksWithInfoSchemaFallback(
-        out,
-        FunctionsFormat.Header.class,
-        getOverrideableQuery(
-            arguments,
-            "SELECT function_schema, function_name, data_type, argument_signature FROM"
-                + " %1$s.FUNCTIONS%2$s",
-            MetadataView.FUNCTIONS),
-        FunctionsFormat.IS_ZIP_ENTRY_NAME,
-        IS,
-        FunctionsFormat.AU_ZIP_ENTRY_NAME,
-        ACCOUNT_USAGE_SCHEMA_NAME,
-        ACCOUNT_USAGE_WHERE_CONDITION,
-        isAssessment,
-        getInformationSchemaWhereCondition("function_catalog", arguments.getDatabases()));
+      addSqlTasksWithInfoSchemaFallback(
+          out,
+          ViewsFormat.Header.class,
+          getOverrideableQuery(
+              arguments,
+              "SELECT table_catalog, table_schema, table_name, view_definition FROM %1$s.VIEWS%2$s",
+              MetadataView.VIEWS),
+          ViewsFormat.IS_ZIP_ENTRY_NAME,
+          IS,
+          ViewsFormat.AU_ZIP_ENTRY_NAME,
+          ACCOUNT_USAGE_SCHEMA_NAME,
+          ACCOUNT_USAGE_WHERE_CONDITION,
+          isAssessment,
+          getInformationSchemaWhereCondition("table_catalog", arguments.getDatabases()));
 
-    if (isAssessment) {
-      for (AssessmentQuery item : planner.generateAssessmentQueries()) {
-        String query = queryForAssessment(item, arguments);
-        Task<?> task =
-            new JdbcSelectTask(item.zipEntryName, query, TaskCategory.REQUIRED, TaskOptions.DEFAULT)
-                .withHeaderTransformer(item.transformer());
-        out.add(task);
+      addSqlTasksWithInfoSchemaFallback(
+          out,
+          FunctionsFormat.Header.class,
+          getOverrideableQuery(
+              arguments,
+              "SELECT function_schema, function_name, data_type, argument_signature FROM"
+                  + " %1$s.FUNCTIONS%2$s",
+              MetadataView.FUNCTIONS),
+          FunctionsFormat.IS_ZIP_ENTRY_NAME,
+          IS,
+          FunctionsFormat.AU_ZIP_ENTRY_NAME,
+          ACCOUNT_USAGE_SCHEMA_NAME,
+          ACCOUNT_USAGE_WHERE_CONDITION,
+          isAssessment,
+          getInformationSchemaWhereCondition("function_catalog", arguments.getDatabases()));
+
+      if (isAssessment) {
+        for (AssessmentQuery item : planner.generateAssessmentQueries()) {
+          String query = queryForAssessment(item, arguments);
+          Task<?> task =
+              new JdbcSelectTask(item.zipEntryName, query, TaskCategory.REQUIRED, TaskOptions.DEFAULT)
+                  .withHeaderTransformer(item.transformer());
+          out.add(task);
+        }
+        return;
       }
-      return;
+
+      if (databases.isEmpty()) {
+        AssessmentQuery query = SnowflakePlanner.SHOW_EXTERNAL_TABLES;
+        Task<?> task = convertAssessmentQuery(query, arguments, TaskOptions.DEFAULT);
+        out.add(task);
+        return;
+      }
+
+      TaskOptions taskOptions = TaskOptions.DEFAULT;
+
+      for (String item : databases) {
+        String quotedName = databaseNameQuoted(item);
+        AssessmentQuery baseQuery = SnowflakePlanner.SHOW_EXTERNAL_TABLES;
+
+        String formatString = String.format("%s IN DATABASE %s", baseQuery.formatString, quotedName);
+        AssessmentQuery query = baseQuery.withFormatString(formatString);
+        Task<?> task = convertAssessmentQuery(query, arguments, taskOptions);
+        out.add(task);
+        // Next tasks will append to the same file.
+        taskOptions = taskOptions.withWriteMode(WriteMode.APPEND_EXISTING);
+      }
     }
-    ImmutableList<String> databases = arguments.getDatabases();
+  }
 
-    if (databases.isEmpty()) {
-      AssessmentQuery query = SnowflakePlanner.SHOW_EXTERNAL_TABLES;
-      Task<?> task = convertAssessmentQuery(query, arguments, TaskOptions.DEFAULT);
-      out.add(task);
-      return;
+  private List<String> getDatabases(
+      @Nonnull ConnectorArguments arguments, @Nonnull List<? super Task<?>> out) {
+    if (!arguments.getDatabases().isEmpty()) {
+      return arguments.getDatabases();
     }
-
-    TaskOptions taskOptions = TaskOptions.DEFAULT;
-
-    for (String item : databases) {
-      String quotedName = databaseNameQuoted(item);
-      AssessmentQuery baseQuery = SnowflakePlanner.SHOW_EXTERNAL_TABLES;
-
-      String formatString = String.format("%s IN DATABASE %s", baseQuery.formatString, quotedName);
-      AssessmentQuery query = baseQuery.withFormatString(formatString);
-      Task<?> task = convertAssessmentQuery(query, arguments, taskOptions);
-      out.add(task);
-      // Next tasks will append to the same file.
-      taskOptions = taskOptions.withWriteMode(WriteMode.APPEND_EXISTING);
-    }
+    List<String> databases = new ArrayList<>();
+    out.add(
+        new AbstractJdbcTask<List<String>>("show-databases.csv") {
+          @Nonnull
+          @Override
+          protected List<String> doInConnection(
+              @Nonnull TaskRunContext context,
+              @Nonnull JdbcHandle jdbcHandle,
+              @Nonnull ByteSink sink,
+              @Nonnull Connection connection)
+              throws SQLException {
+            List<String> databases = new ArrayList<>();
+            jdbcHandle
+                .getJdbcTemplate()
+                .query(
+                    "SHOW DATABASES",
+                    (rs, rowNum) -> {
+                      return databases.add(rs.getString("name"));
+                    });
+            return databases;
+          }
+        });
+    return databases;
   }
 
   private String queryForAssessment(AssessmentQuery item, ConnectorArguments arguments) {

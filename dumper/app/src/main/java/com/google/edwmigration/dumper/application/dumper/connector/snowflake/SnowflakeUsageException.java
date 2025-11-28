@@ -68,27 +68,11 @@ class SnowflakeUsageException extends MetadataDumperUsageException {
   }
 
   @Nonnull
-  static SnowflakeUsageException unsupportedAssessment() {
-    String message = String.format("The --%s flag is not supported.", OPT_ASSESSMENT);
-    return new SnowflakeUsageException(message);
-  }
-
-  @Nonnull
   static SnowflakeUsageException unsupportedEarliestTimestamp() {
     String message =
         String.format(
             "Unsupported option used with --%s: please remove --%s",
             OPT_ASSESSMENT, OPT_QUERY_LOG_EARLIEST_TIMESTAMP);
     return new SnowflakeUsageException(message);
-  }
-
-  @Nonnull
-  static SnowflakeUsageException unsupportedFilter() {
-    Stream<String> messages =
-        Stream.of(
-            "Trying to filter by database with the --" + OPT_ASSESSMENT + " flag.",
-            "This is unsupported in Assessment.",
-            "Remove either the --" + OPT_ASSESSMENT + " or the --" + OPT_DATABASE + " flag.");
-    return new SnowflakeUsageException(messages.collect(joining(" ")));
   }
 }

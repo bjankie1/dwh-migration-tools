@@ -49,13 +49,13 @@ public class SnowflakeLiteConnectorTest {
   }
 
   @Test
-  public void validate_databaseFlag_throwsException() {
+  public void validate_databaseFlag_doesNotThrowException() {
     ImmutableList<String> list =
         ImmutableList.of(
             "--connector", "snowflake-lite", "--assessment", "--database", "SNOWFLAKE");
     ConnectorArguments arguments = ConnectorArguments.create(list);
 
-    assertThrows(SnowflakeUsageException.class, () -> connector.validate(arguments));
+    connector.validate(arguments);
   }
 
   @Test
